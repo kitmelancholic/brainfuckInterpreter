@@ -1,19 +1,19 @@
 .model tiny
 
+; Constants
 MAX_SIZE EQU 10001
-FILENAME_SIZE EQU 256d
+
+CR              EQU 0Dh
+LF              EQU 0Ah
 
 OPEN_FILE_FN    EQU 3Dh
 CLOSE_FILE_FN   EQU 3Eh
 READ_FILE_FN    EQU 3Fh
 WRITE_FILE_FN   EQU 40h
 
-TAIL_BYTES EQU 80h
-TAIL_START EQU 81h
-TAIL_LENGTH EQU 127
+TAIL_START      EQU 81h
 
 .data?
-filename   db FILENAME_SIZE dup(?)
 code       db MAX_SIZE DUP(?)
 cells      dw MAX_SIZE DUP(?)
 
@@ -22,31 +22,29 @@ org 100h
 
 init:
 clearUnintializedVariables:
-    mov di, offset filename
+    mov di, offset code
     mov si, di                          ; Set up si for later use
-    mov cx, MAX_SIZE*3+FILENAME_SIZE    ; Total length of uninitialized data
+    mov cx, MAX_SIZE*3                  ; Total length of uninitialized data
     xor ax, ax                          ; Zero out ax
     rep stosb                           ; Initialize memory to zero
 
-copyFilename:                           ; Transfer filename from command line
-    mov si, 82h
-    mov cl, [ds:TAIL_BYTES]
-    dec cl
-    mov di, offset filename
-    rep movsb
+prepareFilename:
+    mov dx, TAIL_START+1
+    mov bx, [ds:TAIL_START-1]
+    mov byte ptr [bx-2000h+81h], 0
 
 readCode:
     mov ah, OPEN_FILE_FN                ; Prepare to open file
-    mov dx, offset filename             ; Point to filename
     int 21h
     ; Error handling omitted
     mov bx, ax                          ; Store file handle
-
     mov ah, READ_FILE_FN
     dec cx                              ; Set to max possible size
-    mov dx, offset code                 ; Destination for code
+    mov dx, si                          ; Destination for code
     int 21h
 
+    mov di, offset cells
+    inc cx
 decodeCommand:
 ; Parameters:
 ;   al - current instruction
@@ -56,27 +54,50 @@ decodeCommand:
 ;   bx - file descriptor
 ;   cx - I/O byte count
 ; No return value
-increment:
-    cmp al, '+'
-    jne SHORT decrement
-    inc word ptr [di]
-decrement:
-    cmp al, '-'
-    jne SHORT incrementPointer
-    dec word ptr [di]
-incrementPointer:
+    xor bx, bx
+    cmp al, '['
+    jne endLoopCheck
+startLoop:
+    push si
+    cmp word ptr [di], bx
+    jnz loadNextChar
+    inc cx
+endLoopCheck:
+    cmp al, ']'
+    jne checkIsHalted
+endLoop:
+    pop bx
+    dec cx
+    jns loadNextChar
+    inc cx
+    dec bx
+    mov si, bx
+
+checkIsHalted:
+    or cx, cx
+    jnz loadNextChar
+
+decodeModifyingCommand:
     cmp al, '>'
     jne SHORT decrementPointer
     inc di
     inc di
+
 decrementPointer:
     cmp al, '<'
-    jne SHORT startLoop
+    jne SHORT incrementValue
     dec di
     dec di
-startLoop:
 
-endLoop:
+incrementValue:
+    cmp al, '+'
+    jne SHORT decrementValue
+    inc word ptr [di]
+
+decrementValue:
+    cmp al, '-'
+    jne SHORT checkReadChar
+    dec word ptr [di]
 
 checkReadChar:
     cmp al, ','
